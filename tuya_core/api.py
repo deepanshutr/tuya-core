@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from .driver import TuyaError
 from .keys import KeyEntry
+from .onboard import OnboardResult
+from .onboard import onboard as run_onboard
 from .registry import Bulb, Registry
 from .scenes import SCENES, resolve_scene
 
@@ -151,25 +153,30 @@ def create_app(
     @app.post("/onboard")
     async def onboard_route(body: OnboardIn) -> dict[str, Any]:
         # Tuya bulbs in setup mode (ESP_* SSID) use Espressif's ESP-TOUCH
-        # protocol — the SAME module wiz-core gains in Stream #1. Until that
-        # lands and its public API stabilises, /onboard returns 501 with a
-        # structured envelope (mirrors wiz-core's pre-amendment stub).
-        # The final task(s) of this plan swap this for the real call.
-        # See amendment §A1 "Tuya-core dependency".
+        # protocol. The standalone `esptouch` library handles the broadcast;
+        # this handler owns discovery polling and the registry diff.
+        # Contract pinned by amendment §A1: 200/408/422/500 only.
+        result: OnboardResult = await run_onboard(
+            ssid=body.ssid,
+            password=body.password,
+            timeout_s=body.timeout_s,
+            registry=registry,
+            run_discovery=run_discovery,
+        )
+        if result.status == "ok":
+            return {"onboarded": result.onboarded}
+        if result.status == "timeout":
+            raise HTTPException(
+                status_code=408,
+                detail={
+                    "error": "timeout",
+                    "attempted_seconds": result.attempted_seconds,
+                },
+            )
+        # result.status == "error"
         raise HTTPException(
-            status_code=501,
-            detail={
-                "error": "tuya_onboard_not_implemented",
-                "message": (
-                    "Tuya ESP-TOUCH onboarding is not implemented yet. It is "
-                    "gated on Stream #1 landing the shared ESP-TOUCH module in "
-                    "wiz-core. Use the Smart Life / Tuya mobile app to onboard "
-                    "new bulbs; they appear in the registry within ~10min via "
-                    "the background rediscover loop. Then populate "
-                    "~/.config/tuya/keys.json with the device's local_key."
-                ),
-                "requested": {"ssid": body.ssid, "timeout_s": body.timeout_s},
-            },
+            status_code=500,
+            detail={"error": "esptouch_internal", "detail": result.detail},
         )
 
     @app.get("/scenes")

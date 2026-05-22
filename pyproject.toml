@@ -22,7 +22,11 @@ dependencies = [
     "httpx>=0.27",
     "typer>=0.13",
     "tinytuya>=1.18",
+    "esptouch @ git+https://github.com/deepanshutr/esptouch.git",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.optional-dependencies]
 dev = [

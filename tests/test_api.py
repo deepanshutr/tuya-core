@@ -245,14 +245,56 @@ def test_driver_error_returns_504(client) -> None:
     assert "simulated udp timeout" in r.json()["detail"]
 
 
-def test_onboard_returns_501_structured(client) -> None:
-    """/onboard ships as a 501 stub until Stream #1's ESP-TOUCH module lands."""
+def test_onboard_success_returns_200(client, mocker) -> None:
+    """/onboard with a joining bulb returns 200 {onboarded:[...]}."""
+    from esptouch import NewBulb
+
+    from tuya_core.onboard import OnboardResult
+
+    mocker.patch(
+        "tuya_core.api.run_onboard",
+        return_value=OnboardResult.from_bulbs(
+            [NewBulb(mac="d8a0118dc5c3", ip="192.168.1.9", name="bulb-1", rssi=None)]
+        ),
+    )
     c, *_ = client
     r = c.post("/onboard", json={"ssid": "home", "password": "pw", "timeout_s": 30})
-    assert r.status_code == 501
+    assert r.status_code == 200
+    body = r.json()
+    assert "onboarded" in body
+    assert body["onboarded"][0]["mac"] == "d8a0118dc5c3"
+
+
+def test_onboard_timeout_returns_408(client, mocker) -> None:
+    """/onboard with no joining bulb returns 408 with attempted_seconds."""
+    from tuya_core.onboard import OnboardResult
+
+    mocker.patch(
+        "tuya_core.api.run_onboard",
+        return_value=OnboardResult(status="timeout", attempted_seconds=30),
+    )
+    c, *_ = client
+    r = c.post("/onboard", json={"ssid": "home", "password": "pw", "timeout_s": 30})
+    assert r.status_code == 408
     detail = r.json()["detail"]
-    assert detail["error"] == "tuya_onboard_not_implemented"
-    assert detail["requested"]["ssid"] == "home"
+    assert detail["error"] == "timeout"
+    assert detail["attempted_seconds"] == 30
+
+
+def test_onboard_esptouch_error_returns_500(client, mocker) -> None:
+    """/onboard with an EsptouchError returns 500 with error envelope."""
+    from tuya_core.onboard import OnboardResult
+
+    mocker.patch(
+        "tuya_core.api.run_onboard",
+        return_value=OnboardResult(status="error", detail="socket bind failed"),
+    )
+    c, *_ = client
+    r = c.post("/onboard", json={"ssid": "home", "password": "pw", "timeout_s": 30})
+    assert r.status_code == 500
+    detail = r.json()["detail"]
+    assert detail["error"] == "esptouch_internal"
+    assert "socket bind failed" in detail["detail"]
 
 
 def test_onboard_validates_required_fields(client) -> None:

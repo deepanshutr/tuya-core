@@ -326,6 +326,11 @@ wheels = [
 ]
 
 [[package]]
+name = "esptouch"
+version = "0.1.0"
+source = { git = "https://github.com/deepanshutr/esptouch.git#d4fa5283861caf1e16d8f56f4e178f68a135cfec" }
+
+[[package]]
 name = "fastapi"
 version = "0.136.1"
 source = { registry = "https://pypi.org/simple" }
@@ -961,6 +966,7 @@ name = "tuya-core"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "esptouch" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic" },
@@ -981,6 +987,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "esptouch", git = "https://github.com/deepanshutr/esptouch.git" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
