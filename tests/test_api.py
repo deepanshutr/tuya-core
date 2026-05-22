@@ -226,7 +226,7 @@ def test_scenes_catalog_endpoint(client) -> None:
 
 def test_driver_error_returns_504(client) -> None:
     """A TuyaError from the driver surfaces as HTTP 504."""
-    c, reg, _ = client
+    _c, reg, _ = client
 
     class FailingDriver(StubDriver):
         async def turn_on(self, ip: str, key: KeyEntry) -> dict:
