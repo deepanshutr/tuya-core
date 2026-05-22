@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any, Protocol
 
@@ -271,5 +273,91 @@ def _register_all_routes(
     keys_provider: KeysProvider,
     all_concurrency: int,
 ) -> None:
-    """Placeholder; the broadcast family is implemented in Task 9."""
-    return None
+    """Register the six POST /bulb/all/{op} broadcast endpoints (amendment §A2).
+
+    Best-effort fan-out: always HTTP 200, per-bulb results array, concurrency
+    capped at min(len(bulbs), all_concurrency). No exception escapes — a
+    key-missing bulb or a driver error becomes a per-bulb `ok: false` entry.
+    """
+
+    BulbOp = Callable[[Bulb, KeyEntry], Coroutine[Any, Any, dict[str, Any]]]
+
+    async def _fan_out(op_name: str, op: BulbOp) -> dict[str, Any]:
+        bulbs = registry.all()
+        keys = keys_provider()
+        started = time.monotonic()
+        sem = asyncio.Semaphore(max(1, min(len(bulbs), all_concurrency)) if bulbs else 1)
+
+        async def one(b: Bulb) -> dict[str, Any]:
+            t0 = time.monotonic()
+            async with sem:
+                key = keys.get(b.mac)
+                if key is None:
+                    return {
+                        "mac": b.mac, "ok": False, "error": "key_missing",
+                        "duration_ms": 0,
+                    }
+                try:
+                    await op(b, key)
+                except Exception as exc:  # never escape the handler
+                    return {
+                        "mac": b.mac, "ok": False, "error": str(exc),
+                        "duration_ms": round((time.monotonic() - t0) * 1000),
+                    }
+                return {
+                    "mac": b.mac, "ok": True,
+                    "duration_ms": round((time.monotonic() - t0) * 1000),
+                }
+
+        results = list(await asyncio.gather(
+            *(one(b) for b in bulbs), return_exceptions=False
+        ))
+        ok = sum(1 for r in results if r["ok"])
+        return {
+            "op": op_name,
+            "total": len(results),
+            "ok": ok,
+            "failed": len(results) - ok,
+            "duration_ms": round((time.monotonic() - started) * 1000),
+            "results": results,
+        }
+
+    @app.post("/bulb/all/on")
+    async def all_on() -> dict[str, Any]:
+        return await _fan_out("on", lambda b, k: driver.turn_on(b.last_ip, k))
+
+    @app.post("/bulb/all/off")
+    async def all_off() -> dict[str, Any]:
+        return await _fan_out("off", lambda b, k: driver.turn_off(b.last_ip, k))
+
+    @app.post("/bulb/all/brightness")
+    async def all_brightness(body: BrightnessIn) -> dict[str, Any]:
+        return await _fan_out(
+            "brightness",
+            lambda b, k: driver.set_brightness(b.last_ip, k, level=body.level),
+        )
+
+    @app.post("/bulb/all/temp")
+    async def all_temp(body: TempIn) -> dict[str, Any]:
+        return await _fan_out(
+            "temp", lambda b, k: driver.set_temp(b.last_ip, k, kelvin=body.kelvin)
+        )
+
+    @app.post("/bulb/all/color")
+    async def all_color(body: ColorIn) -> dict[str, Any]:
+        return await _fan_out(
+            "color",
+            lambda b, k: driver.set_color(b.last_ip, k, r=body.r, g=body.g, b=body.b),
+        )
+
+    @app.post("/bulb/all/scene")
+    async def all_scene(body: SceneIn) -> dict[str, Any]:
+        # Resolve once, fail fast at 400 before any fan-out.
+        try:
+            dpid, value = resolve_scene(body.scene)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return await _fan_out(
+            "scene",
+            lambda b, k: driver.set_scene(b.last_ip, k, dpid=dpid, value=value),
+        )
